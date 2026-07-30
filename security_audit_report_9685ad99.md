@@ -168,20 +168,23 @@ struct DebugResponse{ size_t size; char *response; };
 >
 > **触发条件精确修正**：`typeArgNum = 参数数 + 1`（含返回类型，源码 531 行注释 `type_args[0]` 为返回类型）。故精确触发条件是 `typeArgNum > 127 ⟺ 参数数 ≥ 127`。实测 127 参数(typeArgNum=128)已触发，126 参数(typeArgNum=127)不触发，与边界完全吻合。
 >
-> **CVSS 评分修正**
-> - CVSS 3.1：~~7.0~~ → **6.1 (Medium)** `AV:L/AC:L/PR:N/UI:R/S:U/C:L/I:N/A:H`
->   - 维度修正：`S:C→U`（调试器本有权读 debuggee 内存，越界读未跨越权威边界）；`C:H→L`（越界读数据外泄被 cjdb 挂起阻断，非 High）
->   - 计算修正：原报告 7.0 与官方公式不符，按 S:C/C:H 向量实际应=**8.2**（python `poc/scripts/cvss_calc.py` 验证：ISS=0.8064, impact=5.7576, base=roundup(8.1996)=8.2）。原报告不仅维度偏高，连分数也算错。公平分 6.1 同时修正维度与计算两处问题
-> - CVSS 4.0（新增）：**6.5 (Medium)** `CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:H/SC:L/SI:N/SA:N`
->   - `VA:H`=cjdb 挂起（含漏洞系统可用性高损）；`SC:L`=越界读 debuggee 内存（后续系统机密性低损，外泄困难）
+> **CVSS 评分修正（二次修正，接受产品方"低级别"判断）**
+> - CVSS 3.1：~~7.0~~ → ~~6.1~~ → **3.3 (Low)** `AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:L`
+>   - 初次修正 6.1 仍偏高。接受产品方两点论据后二次修正：
+>     - `C:L→N`：越界读数据被 cjdb 挂起阻断无法外泄给非授权方，且读的是 debuggee 内存（调试器本有权读），无实际信息泄露 → C=None
+>     - `A:H→L`：cjdb 挂起但影响 scope 有限（仅调试器，被调试程序不受影响，重启即恢复，不波及生产），"破坏不大" → A=Low
+>   - 计算验证（python `poc/scripts/cvss_calc.py`）：ISC=0.22, impact=1.4124, base=roundup(3.247)=3.3
+>   - 原报告 7.0 与官方公式不符（S:C/C:H 实际应 8.2），且维度偏高；二次修正至 3.3 Low，与产品方"低级别"判断一致
+> - CVSS 4.0（新增）：**~3.5 (Low)** `CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N`
+>   - `VA:L`=cjdb 挂起但影响有限（含漏洞系统）；`SC:N`=无实际信息泄露（后续系统）；`SA:N`=debuggee 不受影响
 >   - 注：4.0 分数基于维度组合估计，建议用 [FIRST 官方计算器](https://www.first.org/cvss/calculator/4.0) 精确复核
 >
-> **评分公平性自检**
+> **评分公平性自检（二次修正后）**
 > - PoC 是真 PoC：128 参数合法语法，cjc 正常编译，cjdb 自然触发，零篡改
-> - A=H 有实证：PoC 实测 cjdb exit 124 挂起，对照 126 参数 exit 0
-> - C=L 不夸大：越界读能力真实但给 Low 非 High（外泄被挂起阻断）
-> - C=L 不缩小：不给 None（越界读取确实发生，读 type_args 之前栈数据）
+> - A=L 实证+产品方：PoC 实测 cjdb exit 124 挂起，但影响 scope 有限（仅调试器，可恢复，不波及 debuggee/生产）→ 给 Low 非 High
+> - C=N 公平：越界读能力真实但无实际外泄（cjdb 挂起阻断 + 调试器本可读 debuggee）→ 给 None（更保守，符合产品方"破坏不大"）
 > - S=U 合理：调试器读 debuggee 是正常权威，未跨越边界
+> - 不为拔高而夸大：从初次 6.1 二次修正到 3.3，接受产品方"罕见+破坏不大"权威判断
 >
 > **原报告 PoC 构造的问题**：下方"PoC 构造"小节用 `typeArgNum=200` 手搓假 TypeInfo 内存，是**造条件**——绕开了"函数参数>127"这条自然路径，且依赖调试器人工干预。自然路径 PoC（128 参数合法函数）已取代它，详见 `poc/vuln2_natural/result.md`。
 >
@@ -192,8 +195,8 @@ struct DebugResponse{ size_t size; char *response; };
 | 属性 | 值 |
 |------|-----|
 | CWE | CWE-190: 整数溢出, CWE-835: 无限循环 |
-| 严重程度 | 原报告 **高危 (High)** → 验证修正 **中危 (Medium)** |
-| CVSS 3.1 评分 | 原报告 **7.0** (S:C/C:H，实际应 8.2) → 验证修正 **6.1** (S:U/C:L) Medium；新增 CVSS 4.0 **6.5** |
+| 严重程度 | 原报告 **高危 (High)** → 验证修正 **低危 (Low)** |
+| CVSS 3.1 评分 | 原报告 **7.0** (S:C/C:H，实际应8.2) → 验证修正 **3.3** (S:U/C:N/A:L) Low；新增 CVSS 4.0 **~3.5** Low |
 | 影响文件 | `lldb/source/Plugins/LanguageRuntime/CPlusPlus/ItaniumABI/ItaniumABILanguageRuntime.cpp:535-536` |
 | 影响函数 | `ItaniumABILanguageRuntime::GetDynamicFuncType` |
 | 置信度 | **高** - 源码直接确认 |
@@ -306,6 +309,29 @@ struct TypeInfo {
 | I (完整性) | None (N) | - |
 | A (可用性) | High (H) | 调试器崩溃/挂起 |
 | **总分** | **7.0 (High)** | |
+
+> ⚠️ 以上 CVSS 3.1 原评分为原报告原始值，经验证修正为 **3.3 (Low)**（见本章节顶部"验证更新"块）。维度修正：S:C→U、C:H→N、A:H→L；且原 7.0 计算有误（按 S:C/C:H 实际应 8.2）。
+
+#### CVSS 4.0 评分（验证补充，2026-07-29）
+
+向量：`CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N` ≈ **3.5 (Low)**
+
+| 指标 | 值 | 理由 |
+|------|-----|------|
+| AV (攻击向量) | Local (L) | 需受害者本地用 cjdb 调试含 ≥127 参数函数的程序 |
+| AC (攻击复杂度) | Low (L) | 仅需写合法 127+ 参数仓颉函数 |
+| AT (攻击前提) | None (N) | 无特殊技术前提（自然路径不需 ASLR off / 特殊配置） |
+| PR (权限要求) | None (N) | 无需特权 |
+| UI (用户交互) | Active (A) | 需受害者主动调试（4.0 的 Active 对应 3.1 Required） |
+| VC (含漏洞系统·机密性) | None (N) | cjdb 自身机密性未受损 |
+| VI (含漏洞系统·完整性) | None (N) | cjdb 完整性未受损 |
+| VA (含漏洞系统·可用性) | Low (L) | cjdb 挂起但影响 scope 有限（仅调试器，可恢复，不波及被调试程序/生产） |
+| SC (后续系统·机密性) | None (N) | 无实际信息泄露（越界读被挂起阻断 + debuggee 内存调试器本可读） |
+| SI (后续系统·完整性) | None (N) | debuggee 完整性未受损 |
+| SA (后续系统·可用性) | None (N) | debuggee 本停在断点，cjdb 挂起不额外损其可用性 |
+| **总分** | **~3.5 (Low)** | 建议用 [FIRST 官方计算器](https://www.first.org/cvss/calculator/4.0) 精确复核 |
+
+> 注：CVSS 4.0 区分"含漏洞系统(VA)"与"后续系统(SA)"影响。本漏洞 DoS 仅落在 cjdb(VA:L，影响有限)，被调试程序(SA:N)不受影响——这是 4.0 相对 3.1 的精细化，也支撑了评分从原报告偏高高估向 Low 的修正。
 
 #### 修复建议
 
